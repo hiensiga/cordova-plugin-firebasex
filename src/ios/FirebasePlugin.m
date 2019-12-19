@@ -25,6 +25,8 @@ static NSInteger const kNotificationStackSize = 10;
 static FirebasePlugin *firebasePlugin;
 static BOOL registeredForRemoteNotifications = NO;
 
+#define SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(v)  ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] != NSOrderedAscending)
+
 + (FirebasePlugin *) firebasePlugin {
     return firebasePlugin;
 }
@@ -125,19 +127,29 @@ static BOOL registeredForRemoteNotifications = NO;
 
 -(void)_hasPermission:(void (^)(BOOL result))completeBlock {
     @try {
-        [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
-            @try {
-                BOOL enabled = NO;
-                if (settings.alertSetting == UNNotificationSettingEnabled) {
-                    enabled = YES;
-                    [self registerForRemoteNotifications];
+        if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"10.0")) {
+            [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
+                @try {
+                    BOOL enabled = NO;
+                    if (settings.alertSetting == UNNotificationSettingEnabled) {
+                        enabled = YES;
+                        [self registerForRemoteNotifications];
+                    }
+                    NSLog(@"_hasPermission: %@", enabled ? @"YES" : @"NO");
+                    completeBlock(enabled);
+                }@catch (NSException *exception) {
+                    [self handlePluginExceptionWithoutContext:exception];
                 }
-                NSLog(@"_hasPermission: %@", enabled ? @"YES" : @"NO");
-                completeBlock(enabled);
-            }@catch (NSException *exception) {
-                [self handlePluginExceptionWithoutContext:exception];
+            }];
+        } else {
+            BOOL enabled = [[UIApplication sharedApplication] isRegisteredForRemoteNotifications];
+//            BOOL enabled = [UIApplication sharedApplication].currentUserNotificationSettings.types != UIUserNotificationTypeNone;
+            if (enabled) {
+                [self registerForRemoteNotifications];
             }
-        }];
+            NSLog(@"_hasPermission: %@", enabled ? @"YES" : @"NO");
+            completeBlock(enabled);
+        }
     }@catch (NSException *exception) {
         [self handlePluginExceptionWithoutContext:exception];
     }
@@ -153,28 +165,42 @@ static BOOL registeredForRemoteNotifications = NO;
                     CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:message];
                     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
                 }else{
-                    [UNUserNotificationCenter currentNotificationCenter].delegate = (id<UNUserNotificationCenterDelegate> _Nullable) self;
-                    UNAuthorizationOptions authOptions = UNAuthorizationOptionAlert|UNAuthorizationOptionSound|UNAuthorizationOptionBadge;
-                    [[UNUserNotificationCenter currentNotificationCenter]
-                     requestAuthorizationWithOptions:authOptions
-                     completionHandler:^(BOOL granted, NSError * _Nullable error) {
-                        @try {
-                            NSLog(@"requestAuthorizationWithOptions: granted=%@", granted ? @"YES" : @"NO");
-                            CDVPluginResult* pluginResult;
-                            if (error == nil) {
-                                if(granted){
-                                    [self registerForRemoteNotifications];
+                    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"10.0")) {
+                        // iOS 10 or later
+                        // For iOS 10 display notification (sent via APNS)
+                        [UNUserNotificationCenter currentNotificationCenter].delegate = (id<UNUserNotificationCenterDelegate> _Nullable) self;
+                        UNAuthorizationOptions authOptions = UNAuthorizationOptionAlert|UNAuthorizationOptionSound|UNAuthorizationOptionBadge;
+                        [[UNUserNotificationCenter currentNotificationCenter]
+                         requestAuthorizationWithOptions:authOptions
+                         completionHandler:^(BOOL granted, NSError * _Nullable error) {
+                            @try {
+                                NSLog(@"requestAuthorizationWithOptions: granted=%@", granted ? @"YES" : @"NO");
+                                CDVPluginResult* pluginResult;
+                                if (error == nil) {
+                                    if(granted){
+                                        [self registerForRemoteNotifications];
+                                    }
+                                    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:granted];
+                                }else{
+                                    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.description];
                                 }
-                                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:granted];
-                            }else{
-                                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.description];
+                                [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+                            }@catch (NSException *exception) {
+                                [self handlePluginExceptionWithContext:exception :command];
                             }
-                            [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-                        }@catch (NSException *exception) {
-                            [self handlePluginExceptionWithContext:exception :command];
                         }
+                         ];
+                    } else {
+                        // iOS 10 notifications aren't available; fall back to iOS 8-9 notifications.
+                        UIUserNotificationType allNotificationTypes =
+                        (UIUserNotificationTypeSound | UIUserNotificationTypeAlert | UIUserNotificationTypeBadge);
+                        UIUserNotificationSettings *settings =
+                        [UIUserNotificationSettings settingsForTypes:allNotificationTypes categories:nil];
+                        [[UIApplication sharedApplication] registerUserNotificationSettings:settings];
+                        // TODO: application:didRegisterUserNotificationSettings: determine permission TRUE or FALSE
+                        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:YES];
+                        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
                     }
-                     ];
                 }
             }@catch (NSException *exception) {
                 [self handlePluginExceptionWithContext:exception :command];
