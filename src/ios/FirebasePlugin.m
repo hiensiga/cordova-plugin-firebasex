@@ -197,6 +197,7 @@ static BOOL registeredForRemoteNotifications = NO;
                         UIUserNotificationSettings *settings =
                         [UIUserNotificationSettings settingsForTypes:allNotificationTypes categories:nil];
                         [[UIApplication sharedApplication] registerUserNotificationSettings:settings];
+                        [self registerForRemoteNotifications];
                         // TODO: application:didRegisterUserNotificationSettings: determine permission TRUE or FALSE
                         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:YES];
                         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
